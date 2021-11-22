@@ -8,7 +8,6 @@ let token = undefined;
 let lp = undefined;
 let swap = undefined;
 let accounts = undefined;
-const INIT_SUPPLY = new BN("750000000000000000000000000");
 const ETH1 = new BN("1000000000000000000");
 const ETH2 = new BN("2000000000000000000");
 const ETH5 = new BN("5000000000000000000");
@@ -45,18 +44,17 @@ describe("FondueSwap Test", function () {
             this.swap, 'AddLiquidity').withArgs(
                 this.token.address,
                 ETH2.toString(),
-                "1000000000000000000",
-                "1000000000000",
-                "1000000000000000000",
+                ETH1.toString(),
                 nftId);
         const info = await this.lp.lpInfos(nftId);
         //100% pool share
-        expect(info.poolShares.toString()).to.eq("1000000000000");
-        expect(info.poolAccEthFee.toString()).to.eq("0");
+        //expect(info.poolShare.toString()).to.eq("1000000000000");
+        expect(info.poolAccRatioEth.toString()).to.eq("0");
+        expect(info.poolAccRatioToken.toString()).to.eq("0");
 
         const balance = await this.swap.balanceOf(nftId);
-        expect(balance.ethAmount.toString()).to.eq(ETH1.toString());
-        expect(balance.tokenAmount.toString()).to.eq(ETH2.toString());
+        expect(balance.totalEthAmount.toString()).to.eq(ETH1.toString());
+        expect(balance.totalTokenAmount.toString()).to.eq(ETH2.toString());
 
         const swap = this.swap;
         const token = this.token;
@@ -67,19 +65,30 @@ describe("FondueSwap Test", function () {
         const addr2 = account2.address;
         describe("Trading", function () {
             const largeTrade  = new BN("500000000000000000");
+            const largeTrade1  = new BN("700000000000000000");
             const largeTrade2 = new BN("50000000000000000000");
             const smallTrade = new BN("500");
             it('Make large trade, buy tokens for weis', async function () {
                 const ethAmount = await swap.priceOfToken(addrToken, largeTrade.toString());
+                console.log("to get the following amount of tokens: ", largeTrade.toString());
+                console.log("we need to spent the this amount eth : ", ethAmount.toString());
                 const tx = await swap.connect(account1).swapToToken(addrToken, largeTrade.toString(), 0,{value: ethAmount.toString()});
                 const balance = await token.balanceOf(addr1.toString());
                 expect(balance.toString()).to.eq(largeTrade.toString());
 
                 //check balances on swap contract
                 const balanceNFT = await swap.balanceOf(nftId);
-                const balancePool = await swap.poolBalanceOf(addrToken);
-                expect(balanceNFT.ethAmount).to.eq(balancePool.ethAmount);
-                expect(balanceNFT.tokenAmount).to.eq(balancePool.tokenAmount);
+                const balancePool = await swap.poolInfo(addrToken);
+
+                console.log("the pool has eth:", balancePool.totalEthAmount.toString());
+                console.log("the pool has tok:", balancePool.totalTokenAmount.toString());
+
+                console.log("I have   has eth:", balanceNFT.totalEthAmount.toString());
+                console.log("I have   has tok:", balanceNFT.totalTokenAmount.toString());
+
+                //due to rounding, we expect it to be smaller
+                expect(balancePool.totalEthAmount.sub(balanceNFT.totalEthAmount).toNumber()).to.lte(1257029);
+                expect(balancePool.totalTokenAmount.sub(balanceNFT.totalTokenAmount).toNumber()).to.lte(16033);
 
                 //check price ratio
                 const rc = await tx.wait();
@@ -96,7 +105,7 @@ describe("FondueSwap Test", function () {
 
                 //check balances on swap contract
                 const balanceNFT = await swap.balanceOf(nftId);
-                const balancePool = await swap.poolBalanceOf(addrToken);
+                const balancePool = await swap.poolInfo(addrToken);
                 expect(balanceNFT.ethAmount).to.eq(balancePool.ethAmount);
                 expect(balanceNFT.tokenAmount).to.eq(balancePool.tokenAmount);
 
@@ -123,9 +132,39 @@ describe("FondueSwap Test", function () {
                 //expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
             });
 
-            it('Make small trade, buy wei for tokens', async function () {
+            it('Make large trade1, buy tokens for weis', async function () {
+                const ethAmount = await swap.priceOfToken(addrToken, largeTrade1.toString());
+                console.log("to get the following amount of tokens: ", largeTrade1.toString());
+                console.log("we need to spent the this amount eth : ", ethAmount.toString());
+                const tx = await swap.connect(account2).swapToToken(addrToken, largeTrade1.toString(), 0,{value: ethAmount.toString()});
+                const balance = await token.balanceOf(addr2.toString());
+                expect(balance.toString()).to.eq(largeTrade1.toString());
 
+                //check balances on swap contract
+                const balanceNFT = await swap.balanceOf(nftId);
+                const balancePool = await swap.poolInfo(addrToken);
+
+                console.log("the pool has eth:", balancePool.totalEthAmount.toString());
+                console.log("the pool has tok:", balancePool.totalTokenAmount.toString());
+
+                console.log("I have   has eth:", balanceNFT.totalEthAmount.toString());
+                console.log("I have   has tok:", balanceNFT.totalTokenAmount.toString());
+
+                //due to rounding, we expect it to be smaller
+                expect(balancePool.totalEthAmount.sub(balanceNFT.totalEthAmount).toNumber()).to.lte(4131318);
+                expect(balancePool.totalTokenAmount.sub(balanceNFT.totalTokenAmount).toNumber()).to.lte(1238480);
+
+                //check price ratio
+                const rc = await tx.wait();
+                const event = rc.events.find(event => event.event === 'SwapToToken');
+                const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
+                expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
+            });
+
+            it('Make small trade, buy wei for tokens', async function () {
                 const tokenAmount = await swap.priceOfEth(addrToken, smallTrade.toString());
+                console.log("to get the following amount of eth: ", smallTrade.toString());
+                console.log("we need to spent the this amount tokens : ", tokenAmount.toString());
 
                 await token.transfer(addr2, tokenAmount.toString());
                 await token.connect(account2).approve(swap.address, tokenAmount.toString());
@@ -146,7 +185,7 @@ describe("FondueSwap Test", function () {
                 //expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
             });
 
-            it('Make super large trade, buy wei for tokens', async function () {
+            /*it('Make super large trade, buy wei for tokens', async function () {
 
                 const tokenAmount = await swap.priceOfEth(addrToken, largeTrade.toString());
 
@@ -167,7 +206,7 @@ describe("FondueSwap Test", function () {
 
                 const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
                 expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
-            });
+            });*/
         });
     });
 
