@@ -22,10 +22,9 @@ module.exports = {
             mining: {
                 auto: true, // required to be able to run tests correctly
                 interval: 0
-            }
-        },
-        //no gas charged, this way its easier to track the ETH of the swap
-        gasPrice: 0,
-        initialBaseFeePerGas: 0
+            },
+            gasPrice: 0, //no gas charged, this way its easier to track the ETH of the swap
+            initialBaseFeePerGas: 0
+        }
     }
 };
