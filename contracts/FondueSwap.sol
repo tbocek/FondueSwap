@@ -155,9 +155,9 @@ contract FondueSwap is IERC677Receiver {
         return (ethAmount, ethAmountFee, tokenAmount, tokenAmountFee);
     }
 
-    function poolInfo(address poolTokenAddress) external view returns (uint256 ethAmount, uint256 tokenAmount, uint256 priceRatio) {
+    function poolInfo(address poolTokenAddress) external view returns (uint256 ethAmount, uint256 tokenAmount) {
         Pool memory p = _pools[poolTokenAddress];
-        return (p.eth, p.token, (p.token * PRECISION) / p.eth);
+        return (p.eth, p.token);
     }
 
     //calculates how much tokens is needed to get _ethAmount out of this pool
@@ -202,6 +202,9 @@ contract FondueSwap is IERC677Receiver {
         console.log("aoeuaoue1");
         Pool memory p = _pools[_tokenAddress];
         if(p.token == 0 || p.eth == 0) {
+            console.log("aoeuaoue1", p.token);
+            console.log("aoeuaoue1", p.eth);
+            console.log("aoeuaoue1", _tokenAddress);
             return 0;
         }
         require(p.token > (2 * _tokenAmount), "token amount too high");
@@ -211,6 +214,9 @@ contract FondueSwap is IERC677Receiver {
 
     function swapToToken(address _tokenAddress, uint256 _minTokenAmount, uint96 _deadline) public payable {
         //deadline of 0, means no deadline
+        console.log("_tokenAddress", _tokenAddress);
+        console.log("_minTokenAmount", _minTokenAmount);
+        console.log("_deadline", _deadline);
         require(_deadline == 0 || _deadline > block.timestamp, "tx too old");
         require(msg.value > 0, "eth must be positive");
         Pool storage p = _pools[_tokenAddress];
@@ -232,8 +238,10 @@ contract FondueSwap is IERC677Receiver {
         p.accWin += gain * PRECISION / p.liquidity;
         p.liquidityGain += gain;
 
+        console.log("_deadline", _deadline);
         ////do the transfer, ETH transfer already happened
         SafeERC20.safeTransfer(IERC20(_tokenAddress), msg.sender, tokenAmount);
         emit SwapToToken(_tokenAddress, tokenAmount, msg.value);
+        console.log("_deadline22e", _deadline);
     }
 }

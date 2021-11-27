@@ -4,11 +4,16 @@ const {expectRevert, BN} = require("@openzeppelin/test-helpers");
 const {web3} = require("@openzeppelin/test-helpers/src/setup");
 
 
+let SE20 = undefined;
+let LP = undefined;
+let SWAP = undefined;
+
 let token = undefined;
 let lp = undefined;
 let swap = undefined;
 let accounts = undefined;
 const ONE_E18 = new BN("1000000000000000000");
+const OFI_E18 = new BN("1500000000000000000");
 const TWO_E18 = new BN("2000000000000000000");
 const FIV_E17 = new BN("500000000000000000");
 const FIV_E18 = new BN("5000000000000000000");
@@ -18,53 +23,94 @@ const ONE_E12 = new BN("1000000000000");
 const FIV_E02 = new BN("500");
 
 async function addLiquidity(nftNr, tokenAmount, ethAmount, fromAccount) {
+    //all our accounts have weis/eth, but only the first account has tokens
+    if(fromAccount.address.toString() != accounts[0].address.toString()) {
+        await token.connect(accounts[0]).transfer(fromAccount.address, tokenAmount.toString());
+        await token.connect(fromAccount).approve(swap.address, tokenAmount.toString());
+    }
+    //we need to approve that the swap contract can transferFrom tokens
     await token.connect(fromAccount).approve(swap.address, tokenAmount.toString())
     const addr = new BN(web3.utils.hexToNumberString(token.address.toString()));
     const nftId = addr.shln(96).addn(nftNr).toString();
-    expect(await swap.connect(fromAccount).addLiquidity(token.address, tokenAmount.toString(), {value: ethAmount.toString()})).to.emit(
-        swap, 'AddLiquidity').withArgs(token.address, tokenAmount.toString(), ethAmount.toString(), nftId);
+    await swap.connect(fromAccount).addLiquidity(token.address, tokenAmount.toString(), {value: ethAmount.toString()});
     return nftId;
 }
 
 async function swapToToken(requestedTokenAmount, fromAccount) {
+    await poolInfo();
     const ethAmount = await swap.priceOfToken(token.address, requestedTokenAmount.toString());
+
     console.log("to get the following amount of tokens: ", requestedTokenAmount.toString());
     console.log("we need to spent the this amount eth : ", ethAmount.toString());
 
-    const previousTokenBalance = await token.balanceOf(fromAccount.toString());
-    const previousWeiBalance = fromAccount.getBalance();
-    const tx = await swap.connect(fromAccount).swapToToken(token.address, requestedTokenAmount.toString(), 0, {value: ethAmount.toString()});
-
-    const afterTokenBalance = await token.balanceOf(fromAccount.toString());
-    const afterWeiBalance = fromAccount.getBalance();
+    const previousTokenBalance = await token.balanceOf(fromAccount.address);
+    const previousWeiBalance = await fromAccount.getBalance();
+    //events seem not to work in current hardhat setup
+    await swap.connect(fromAccount).swapToToken(token.address, requestedTokenAmount.toString(), 0, {value: ethAmount.toString()});
+    const afterTokenBalance = await token.balanceOf(fromAccount.address);
+    const afterWeiBalance = await fromAccount.getBalance();
 
     expect(afterTokenBalance.sub(previousTokenBalance).toString()).to.eq(requestedTokenAmount.toString());
     expect(previousWeiBalance.sub(afterWeiBalance).toString()).to.eq(ethAmount.toString());
+    return ethAmount;
+}
 
-    return (ethAmount, tx);
+async function swapToEth(requestedEthAmount, fromAccount) {
+    await poolInfo();
+    const tokenAmount = await swap.priceOfEth(token.address, requestedEthAmount.toString());
+
+    console.log("to get the following amount of eth:     ", requestedEthAmount.toString());
+    console.log("we need to spent the this amount token: ", tokenAmount.toString());
+
+    //events seem not to work in current hardhat setup
+    await token.connect(accounts[0]).transfer(fromAccount.address, tokenAmount.toString());
+    const previousTokenBalance = await token.balanceOf(fromAccount.address);
+    const previousWeiBalance = await fromAccount.getBalance();
+    await token.connect(fromAccount).approve(swap.address, tokenAmount.toString());
+    await swap.connect(fromAccount).swapToEth(token.address, tokenAmount.toString(), requestedEthAmount.toString(), 0);
+    const afterTokenBalance = await token.balanceOf(fromAccount.address);
+    const afterWeiBalance = await fromAccount.getBalance();
+
+    expect(previousTokenBalance.sub(afterTokenBalance).sub(tokenAmount).toNumber()).to.lte(11);
+    const bn = new BN(afterWeiBalance.sub(previousWeiBalance).toString());
+    expect(bn.sub(requestedEthAmount).toNumber()).to.lte(11);
+    return tokenAmount;
+}
+
+async function poolInfo() {
+    const poolInfo = await swap.poolInfo(token.address);
+    console.log("current pool token: ", poolInfo.tokenAmount.toString());
+    console.log("current pool eth:   ", poolInfo.ethAmount.toString());
 }
 
 describe("FondueSwap Test", function () {
 
-    beforeEach("Setup TGT and FondueSwap contracts", async function () {
+    before("Setup TGT and FondueSwap Contracts", async function () {
         accounts = await hre.ethers.getSigners();
-        const SE20 = await ethers.getContractFactory("SomeERC20");
+        SE20 = await ethers.getContractFactory("SomeERC20");
+        LP = await ethers.getContractFactory("FondueLPNFT");
+        SWAP = await ethers.getContractFactory("FondueSwap");
+    });
+
+    beforeEach("Setup TGT and FondueSwap Contracts", async function () {
         token = await SE20.deploy();
-        const LP = await ethers.getContractFactory("FondueLPNFT");
+        await token.deployed();
         lp = await LP.deploy();
-        const SWAP = await ethers.getContractFactory("FondueSwap");
+        await lp.deployed();
         swap = await SWAP.deploy(lp.address);
+        await swap.deployed();
         await lp.setSwapAddress(swap.address);
     });
 
-    it('Check token', async function () {
+    /*it('Check Token', async function () {
         expect(await token.name()).to.equal("SomeERC20");
     });
 
     it('Add Liquidity', async function () {
-        const nftId = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
-        const info = await lp.lpInfos(nftId);
 
+        const nftId = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
+
+        const info = await lp.lpInfos(nftId);
         expect(info.liquidity.toString()).to.eq(TWO_E18.mul(ONE_E18).toString());
         expect(info.poolAccWin.toString()).to.eq("0");
 
@@ -72,135 +118,127 @@ describe("FondueSwap Test", function () {
         expect(balance.ethAmount.toString()).to.eq(ONE_E18.toString());
         expect(balance.tokenAmount.toString()).to.eq(TWO_E18.toString());
 
-        describe("Trading", function () {
+        const p1 = await swap.poolInfo(token.address);
+        expect(p1.ethAmount.toString()).to.eq(ONE_E18.toString());
+        expect(p1.tokenAmount.toString()).to.eq(TWO_E18.toString());
 
-            it('Make large trade, buy tokens for weis', async function () {
-
-                const balancePool1 = await swap.poolInfo(nftId);
-                expect(balancePool1.ethAmount.toString()).to.eq(ONE_E18.toString());
-
-                const {ethAmount,tx} = await swapToToken(FIV_E17, accounts[1]);
-
-
-                //check balances on swap contract
-                const balanceNFT = await swap.balanceOf(nftId);
-                const balancePool = await swap.poolInfo(addrToken);
-
-                console.log("the pool has eth:", balancePool.ethAmount.toString());
-                console.log("the pool has tok:", balancePool.tokenAmount.toString());
-
-                console.log("I have   has eth:", balanceNFT.ethAmount.toString());
-                console.log("I have   has tok:", balanceNFT.tokenAmount.toString());
-
-                //due to rounding, we expect it to be smaller
-                expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(1500001);
-                expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1500000);
-
-                //check price ratio
-                const rc = await tx.wait();
-                const event = rc.events.find(event => event.event === 'SwapToToken');
-                const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
-                expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
-            });
-
-            it('Make small trade, buy tokens for weis', async function () {
-                const ethAmount = await swap.priceOfToken(addrToken, smallTrade.toString());
-                const tx = await swap.connect(account1).swapToToken(addrToken, smallTrade.toString(), 0, {value: ethAmount.toString()});
-                const balance = await token.balanceOf(addr1.toString());
-                expect(balance.toString()).to.eq(smallTrade.add(largeTrade).toString());
-
-                //check balances on swap contract
-                const balanceNFT = await swap.balanceOf(nftId);
-                const balancePool = await swap.poolInfo(addrToken);
-                expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(1500001);
-                expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1500001);
-
-                const rc = await tx.wait();
-                const event = rc.events.find(event => event.event === 'SwapToToken');
-                const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
-
-                expect(balancePool.priceRatio.toString()).to.eq("999999999999");
-            });
-
-            it('Make large trade1, buy tokens for weis', async function () {
-                const ethAmount = await swap.priceOfToken(addrToken, largeTrade1.toString());
-                console.log("to get the following amount of tokens: ", largeTrade1.toString());
-                console.log("we need to spent the this amount eth : ", ethAmount.toString());
-                const tx = await swap.connect(account2).swapToToken(addrToken, largeTrade1.toString(), 0,{value: ethAmount.toString()});
-                const balance = await token.balanceOf(addr2.toString());
-                expect(balance.toString()).to.eq(largeTrade1.toString());
-
-                //check balances on swap contract
-                const balanceNFT = await swap.balanceOf(nftId);
-                const balancePool = await swap.poolInfo(addrToken);
-
-                console.log("the pool has eth:", balancePool.ethAmount.toString());
-                console.log("the pool has tok:", balancePool.tokenAmount.toString());
-
-                console.log("I have   has eth:", balanceNFT.ethAmount.toString());
-                console.log("I have   has tok:", balanceNFT.tokenAmount.toString());
-
-                //due to rounding, we expect it to be smaller
-                expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(12000001);
-                expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1238480);
-
-                //check price ratio
-                const rc = await tx.wait();
-                const event = rc.events.find(event => event.event === 'SwapToToken');
-                const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
-                expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
-            });
-
-            it('Make small trade, buy wei for tokens', async function () {
-                const tokenAmount = await swap.priceOfEth(addrToken, smallTrade.toString());
-                console.log("to get the following amount of eth: ", smallTrade.toString());
-                console.log("we need to spent the this amount tokens : ", tokenAmount.toString());
-
-                await token.transfer(addr2, tokenAmount.toString());
-                await token.connect(account2).approve(swap.address, tokenAmount.toString());
-
-                const balancePrevious = await account2.getBalance();
-                const tx = await swap.connect(account2).swapToEth(addrToken, tokenAmount.toString(), smallTrade.toString(), 0);
-                const rc = await tx.wait(); // 0ms, as tx is already confirmed
-                const event = rc.events.find(event => event.event === 'SwapToEth');
-                const balanceAfter = await account2.getBalance();
-                //expect(balanceAfter.sub(balancePrevious)).to.eq(smallTrade.toString());
-
-                const balanceNFT = await swap.balanceOf(nftId);
-                const balancePool = await swap.poolInfo(addrToken);
-                expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(12000001);
-                expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1238480);
-
-                const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
-                //expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
-            });
-
-            it('Make super large trade, buy wei for tokens', async function () {
-
-                const tokenAmount = await swap.priceOfEth(addrToken, largeTrade.toString());
-
-                await token.transfer(addr2, tokenAmount.toString());
-                await token.connect(account2).approve(swap.address, tokenAmount.toString());
-
-                const balancePrevious = await account2.getBalance();
-                const tx = await swap.connect(account2).swapToEth(addrToken, tokenAmount.toString(), largeTrade.toString(), 0);
-                const rc = await tx.wait(); // 0ms, as tx is already confirmed
-                const event = rc.events.find(event => event.event === 'SwapToEth');
-                const balanceAfter = await account2.getBalance();
-                //expect(balanceAfter.sub(balancePrevious)).to.eq(largeTrade.toString());
-
-                const balanceNFT = await swap.balanceOf(nftId);
-                const balancePool = await swap.poolInfo(addrToken);
-                expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(12000001);
-                expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1238480);
-
-                const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
-                expect(balancePool.priceRatio.toString()).to.eq(priceRatio.toString());
-            });
-        });
     });
+
+    it('Large trade, Buy tokens, Sell Weis (resulting in balanced pool)', async function () {
+        const nftId = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
+        const {tx, ethAmount} = await swapToToken(FIV_E17, accounts[1]);
+
+        //check balances on swap contract
+        const balanceNFT = await swap.balanceOf(nftId);
+        const balancePool = await swap.poolInfo(token.address);
+
+        //console.log("Pool eth:    ", balancePool.ethAmount.toString());
+        //console.log("My liq eth:  ", balanceNFT.ethAmount.toString());
+        //console.log("Pool token:  ", balancePool.tokenAmount.toString());
+        //console.log("My liq token:", balanceNFT.tokenAmount.toString());
+
+        //due to rounding, we expect it to be smaller
+        expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(1500001);
+        expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1500000);
+
+        //show price ratio
+        //const rc = await tx.wait();
+        //const event = tx.events.find(event => event.event === 'SwapToToken');
+        //const priceRatio = new BN(event.args.tokenAmount.toString()).mul(TEN_E12).div(new BN(event.args.ethAmount.toString()));
+        //console.log("price ratio: ", priceRatio);
+    });
+
+    it('Small trade, Buy tokens, Sell Weis (not much impact)', async function () {
+
+        const nftId = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
+        await swapToToken(FIV_E17, accounts[1]);
+        await swapToToken(FIV_E02, accounts[2]);
+
+        const balanceNFT = await swap.balanceOf(nftId);
+        const balancePool = await swap.poolInfo(token.address);
+
+        //console.log("Pool eth:    ", balancePool.ethAmount.toString());
+        //console.log("My liq eth:  ", balanceNFT.ethAmount.toString());
+        //console.log("Pool token:  ", balancePool.tokenAmount.toString());
+        //console.log("My liq token:", balanceNFT.tokenAmount.toString());
+
+        //due to rounding, we expect it to be smaller
+        expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(1500001);
+        expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1500001);
+    });
+
+    it('Large trade, Buy tokens, Sell Weis', async function () {
+        const nftId = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
+        await swapToToken(FIV_E17, accounts[1]);
+        await swapToToken(FIV_E02, accounts[2]);
+        await swapToToken(SEV_E17, accounts[3]);
+
+        const balanceNFT = await swap.balanceOf(nftId);
+        const balancePool = await swap.poolInfo(token.address);
+
+        //console.log("Pool eth:    ", balancePool.ethAmount.toString());
+        //console.log("My liq eth:  ", balanceNFT.ethAmount.toString());
+        //console.log("Pool token:  ", balancePool.tokenAmount.toString());
+        //console.log("My liq token:", balanceNFT.tokenAmount.toString());
+
+        //due to rounding, we expect it to be smaller
+        expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(12000001);
+        expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1500001);
+    });
+
+    it('Large trade, Buy Wei, Sell Tokens', async function () {
+        const nftId = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
+        await swapToToken(FIV_E17, accounts[1]);
+        await swapToToken(FIV_E02, accounts[2]);
+        await swapToToken(SEV_E17, accounts[3]);
+
+        await swapToEth(FIV_E17, accounts[4]);
+
+        const balanceNFT = await swap.balanceOf(nftId);
+        const balancePool = await swap.poolInfo(token.address);
+
+        //due to rounding, we expect it to be smaller
+        expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(12000001);
+        expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1500001);
+    });
+
+    it('Large trade, Buy Wei, Sell Tokens', async function () {
+        const nftId = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
+        await swapToToken(FIV_E17, accounts[1]);
+        await swapToToken(FIV_E02, accounts[2]);
+        await swapToToken(SEV_E17, accounts[3]);
+
+        await swapToEth(FIV_E17, accounts[4]);
+        await swapToEth(ONE_E18, accounts[5]);
+
+        const balanceNFT = await swap.balanceOf(nftId);
+        const balancePool = await swap.poolInfo(token.address);
+
+        //due to rounding, we expect it to be smaller
+        expect(balancePool.ethAmount.sub(balanceNFT.ethAmount).toNumber()).to.lte(12000001);
+        expect(balancePool.tokenAmount.sub(balanceNFT.tokenAmount).toNumber()).to.lte(1500001);
+    });*/
+
 
     it('Add Liquidity and Retrieve it', async function () {
+        const nftId1 = await addLiquidity(0, TWO_E18, ONE_E18, accounts[0]);
+        await swapToToken(FIV_E17, accounts[1]);
+        const nftId2 = await addLiquidity(1, OFI_E18, OFI_E18, accounts[6]);
+
+        //await swapToToken(FIV_E02, accounts[2]);
+        //await swapToToken(SEV_E17, accounts[3]);
+
+        //await swapToEth(FIV_E17, accounts[4]);
+        //await swapToEth(ONE_E18, accounts[5]);
+
+        const b1 = await swap.balanceOf(nftId1);
+        const b2 = await swap.balanceOf(nftId2);
+
+        await poolInfo();
+        console.log("Tok total:          ", b2.tokenAmount.add(b1.tokenAmount).toString());
+        console.log("Eth total:          ", b1.ethAmount.add(b2.ethAmount).toString());
+
 
     });
+
 });
