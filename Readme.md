@@ -11,7 +11,7 @@ this DEX are:
 
 The main difference is that a swap will always increase liquidity in the pool, since the trader can only do a trade if the resulting pool has the same ratio as the trade. For an arbitrage trader, a trade only pays off if the exchange rate is higher/lower than with other swaps. If the market is at price 200$/ETH, the pool is at 190$/ETH, then optimal trade is somewhere between 190 < x < 200, depending on the pool depth. It never pays off to trade at 200$/ETH, although, the trader will get the most coins, but this will be at the market price, which is not interesting for an arbitrage trader.
 
-Due to the formula this pool is expected to have a higher price fluctuation.
+Due to the formula this pool is expected to have a higher price fluctuation. 
 
 ## Installation and Testing
 

@@ -4,7 +4,7 @@ pragma solidity 0.8.10;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-//import "hardhat/console.sol";
+import "hardhat/console.sol";
 
 interface IERC677Receiver {
     function onTokenTransfer(address sender, uint nftId, bytes calldata data) external;
@@ -139,19 +139,24 @@ contract FondueSwap is IERC677Receiver {
         return (_ethAmount + _ethAmountFee, _tokenAmount + _tokenAmountFee);
     }
 
-    function balanceOf(Pool memory p, uint256 liquidity, uint256 poolAccWin) internal pure returns (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee, uint256 liquidityGain) {
+    function balanceOf(Pool memory p, uint256 liquidity, uint256 poolAccWin) internal view returns (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee, uint256 liquidityGain) {
         uint256 totalLiquidity = p.liquidity + p.liquidityGain;
         //rounding, pool will have more than 0 eth/token when all LP withdraw
-        ethAmount = (liquidity * p.eth) / totalLiquidity;
-        tokenAmount = (liquidity * p.token) / totalLiquidity;
+        ethAmount = sqrt(liquidity) * p.eth / sqrt(totalLiquidity);
+        tokenAmount = sqrt(liquidity) * p.token / sqrt(totalLiquidity);
+
+        console.log("liquidity", liquidity);
+        console.log("p.eth", p.eth);
+        console.log("totalLiquidity", totalLiquidity);
+        console.log("ethAmount", ethAmount);
 
         uint256 totalLiquidityGain = liquidity * (p.accWin - poolAccWin);
         //rounding, pool will have more than 0 eth/token when all LP withdraw
         liquidityGain = totalLiquidityGain / PRECISION;
         if(totalLiquidityGain > 0) {
             //rounding, pool will have more than 0 eth/token when all LP withdraw
-            ethAmountFee = (liquidityGain * p.eth) / totalLiquidity;
-            tokenAmountFee = (liquidityGain * p.token) / totalLiquidity;
+            ethAmountFee = (sqrt(liquidityGain) * p.eth) / sqrt(totalLiquidity);
+            tokenAmountFee = (sqrt(liquidityGain) * p.token) / sqrt(totalLiquidity);
         }
         return (ethAmount, ethAmountFee, tokenAmount, tokenAmountFee, liquidityGain);
     }
@@ -234,4 +239,18 @@ contract FondueSwap is IERC677Receiver {
         SafeERC20.safeTransfer(IERC20(_tokenAddress), msg.sender, tokenAmount);
         emit SwapToToken(_tokenAddress, tokenAmount, msg.value);
     }
+
+    function sqrt(uint y) internal pure returns (uint z) {
+        if (y > 3) {
+            z = y;
+            uint x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
+    }
 }
+
