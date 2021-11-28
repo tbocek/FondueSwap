@@ -80,6 +80,10 @@ contract FondueSwap is IERC677Receiver {
         lpAddress = _lpAddress;
     }
 
+    function flashLoan(address _tokenAddress, uint256 _maxTokenAmount) public payable {
+
+    }
+
     function addLiquidity(address _tokenAddress, uint256 _maxTokenAmount) public payable {
         Pool storage p = _pools[_tokenAddress];
 
@@ -131,19 +135,19 @@ contract FondueSwap is IERC677Receiver {
     function balanceOf(uint256 nftId) external view returns (uint256 ethAmount, uint256 tokenAmount) {
         (uint256 liquidity, uint256 poolAccWin) = FondueLPNFT(lpAddress).lpInfos(nftId);
         Pool memory p = _pools[address(uint160(nftId >> 96))]; // nftId >> 96 calculates the poolTokenAddress
-        (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee, uint256 liquidityGain) = balanceOf(p, liquidity, poolAccWin);
-        return (ethAmount + ethAmountFee, tokenAmount + tokenAmountFee);
+        (uint256 _ethAmount, uint256 _ethAmountFee, uint256 _tokenAmount, uint256 _tokenAmountFee,) = balanceOf(p, liquidity, poolAccWin);
+        return (_ethAmount + _ethAmountFee, _tokenAmount + _tokenAmountFee);
     }
 
     function balanceOf(Pool memory p, uint256 liquidity, uint256 poolAccWin) internal pure returns (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee, uint256 liquidityGain) {
         uint256 totalLiquidity = p.liquidity + p.liquidityGain;
         //rounding, pool will have more than 0 eth/token when all LP withdraw
-        uint256 ethAmount = (liquidity * p.eth) / totalLiquidity;
-        uint256 tokenAmount = (liquidity * p.token) / totalLiquidity;
+        ethAmount = (liquidity * p.eth) / totalLiquidity;
+        tokenAmount = (liquidity * p.token) / totalLiquidity;
 
         uint256 totalLiquidityGain = liquidity * (p.accWin - poolAccWin);
         //rounding, pool will have more than 0 eth/token when all LP withdraw
-        uint256 liquidityGain = totalLiquidityGain / PRECISION;
+        liquidityGain = totalLiquidityGain / PRECISION;
         if(totalLiquidityGain > 0) {
             //rounding, pool will have more than 0 eth/token when all LP withdraw
             ethAmountFee = (liquidityGain * p.eth) / totalLiquidity;
