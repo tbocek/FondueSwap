@@ -8,6 +8,7 @@
     "@openzeppelin/contracts": "^4.4.0",
     "@openzeppelin/test-helpers": "^0.5.15",
     "chai": "^4.3.4",
+    "bn-chai": "^1.0.1",
     "ethereum-waffle": "^3.4.0",
     "merkletreejs": "^0.2.24",
     "ethers": "^5.5.1",
