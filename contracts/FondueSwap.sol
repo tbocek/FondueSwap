@@ -68,9 +68,7 @@ contract FondueSwap is IERC677Receiver {
         uint256 eth;
         uint256 token;
         uint256 liquidity;
-        uint256 liquidityGain;
-        uint256 accWin;
-        uint256 roundingSwap;
+        uint256 accGain;
     }
 
     address private lpAddress;
@@ -99,19 +97,18 @@ contract FondueSwap is IERC677Receiver {
         p.eth += msg.value;
         p.liquidity += msg.value * tokenAmount;
         //hand out LP tokens
-        uint256 nftId = FondueLPNFT(lpAddress).mint(msg.sender, _tokenAddress, msg.value * tokenAmount, p.accWin);
+        uint256 nftId = FondueLPNFT(lpAddress).mint(msg.sender, _tokenAddress, msg.value * tokenAmount, p.accGain);
         emit AddLiquidity(_tokenAddress, tokenAmount, msg.value, nftId);
     }
 
     //remove liquidity
     function onTokenTransfer(address sender, uint256 nftId, bytes calldata) external {
         require(msg.sender == lpAddress, "not the LP NFT");
-        (uint256 liquidity, uint256 poolAccWin) = FondueLPNFT(lpAddress).lpInfos(nftId);
+        (uint256 liquidity, uint256 accGain) = FondueLPNFT(lpAddress).lpInfos(nftId);
         Pool storage p = _pools[address(uint160(nftId >> 96))]; // nftId >> 96 calculates the poolTokenAddress
-        (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee, uint256 liquidityGain) = balanceOf(p, liquidity, poolAccWin);
+        (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee) = balanceOf(p, liquidity, accGain);
         p.eth -= (ethAmount + ethAmountFee);
         p.token -= (tokenAmount + tokenAmountFee);
-        p.liquidityGain -= liquidityGain;
         p.liquidity -= liquidity;
         payable(sender).transfer(ethAmount + ethAmountFee);
         SafeERC20.safeTransfer(IERC20(address(uint160(nftId >> 96))), sender, tokenAmount + tokenAmountFee);
@@ -121,44 +118,41 @@ contract FondueSwap is IERC677Receiver {
     function harvest(uint256 nftId) external {
         address nftOwner = FondueLPNFT(lpAddress).ownerOf(nftId);
         require(nftOwner != address(0), "owner not found");
-        (uint256 liquidity, uint256 poolAccWin) = FondueLPNFT(lpAddress).lpInfos(nftId);
+        (uint256 liquidity, uint256 accGain) = FondueLPNFT(lpAddress).lpInfos(nftId);
         Pool storage p = _pools[address(uint160(nftId >> 96))]; // nftId >> 96 calculates the poolTokenAddress
-        (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee, uint256 liquidityGain) = balanceOf(p, liquidity, poolAccWin);
+        (,uint256 ethAmountFee,, uint256 tokenAmountFee) = balanceOf(p, liquidity, accGain);
         p.eth -= ethAmountFee;
         p.token -= tokenAmountFee;
-        p.liquidityGain -= liquidityGain;
         payable(nftOwner).transfer(ethAmountFee);
         SafeERC20.safeTransfer(IERC20(address(uint160(nftId >> 96))), nftOwner, tokenAmountFee);
-        FondueLPNFT(lpAddress).updateLP(nftId, ethAmount * tokenAmount, p.accWin);
+        FondueLPNFT(lpAddress).updateLP(nftId, liquidity, p.accGain);
     }
 
     function balanceOf(uint256 nftId) external view returns (uint256 ethAmount, uint256 tokenAmount) {
-        (uint256 liquidity, uint256 poolAccWin) = FondueLPNFT(lpAddress).lpInfos(nftId);
+        (uint256 liquidity, uint256 accGain) = FondueLPNFT(lpAddress).lpInfos(nftId);
         Pool memory p = _pools[address(uint160(nftId >> 96))]; // nftId >> 96 calculates the poolTokenAddress
-        (uint256 _ethAmount, uint256 _ethAmountFee, uint256 _tokenAmount, uint256 _tokenAmountFee,) = balanceOf(p, liquidity, poolAccWin);
+        (uint256 _ethAmount, uint256 _ethAmountFee, uint256 _tokenAmount, uint256 _tokenAmountFee) = balanceOf(p, liquidity, accGain);
         return (_ethAmount + _ethAmountFee, _tokenAmount + _tokenAmountFee);
     }
 
-    function balanceOf(Pool memory p, uint256 liquidity, uint256 poolAccWin) internal view returns (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee, uint256 liquidityGain) {
-        uint256 totalLiquidity = p.liquidity + p.liquidityGain;
-        //rounding, pool will have more than 0 eth/token when all LP withdraw
-        ethAmount = sqrt(liquidity) * p.eth / sqrt(totalLiquidity);
-        tokenAmount = sqrt(liquidity) * p.token / sqrt(totalLiquidity);
+    function balanceOf(Pool memory p, uint256 liquidity, uint256 accGain) internal view returns (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee) {
+        ethAmount = sqrt(liquidity * p.eth / p.token);
+        tokenAmount = sqrt(liquidity * p.token / p.eth);
+        console.log("ethAmount",ethAmount);
+        console.log("tokenAmount",tokenAmount);
 
-        console.log("liquidity", liquidity);
-        console.log("p.eth", p.eth);
-        console.log("totalLiquidity", totalLiquidity);
-        console.log("ethAmount", ethAmount);
+        uint256 g = p.accGain - accGain;
 
-        uint256 totalLiquidityGain = liquidity * (p.accWin - poolAccWin);
-        //rounding, pool will have more than 0 eth/token when all LP withdraw
-        liquidityGain = totalLiquidityGain / PRECISION;
-        if(totalLiquidityGain > 0) {
-            //rounding, pool will have more than 0 eth/token when all LP withdraw
-            ethAmountFee = (sqrt(liquidityGain) * p.eth) / sqrt(totalLiquidity);
-            tokenAmountFee = (sqrt(liquidityGain) * p.token) / sqrt(totalLiquidity);
-        }
-        return (ethAmount, ethAmountFee, tokenAmount, tokenAmountFee, liquidityGain);
+        uint256 t = sqrt(liquidity) * g / PRECISION;
+
+        //uint256 liquidityGain = (t * g * (p.accGain - accGain)) / PRECISION;
+        ethAmountFee = (t * p.eth / p.token);
+        tokenAmountFee = (t * p.token / p.eth);
+
+        console.log("ethAmountFee",ethAmountFee);
+        console.log("tokenAmountFee",tokenAmountFee);
+
+        return (ethAmount, ethAmountFee, tokenAmount, tokenAmountFee);
     }
 
     function poolInfo(address poolTokenAddress) external view returns (uint256 ethAmount, uint256 tokenAmount) {
@@ -167,13 +161,14 @@ contract FondueSwap is IERC677Receiver {
     }
 
     //calculates how much tokens is needed to get _ethAmount out of this pool
-    function priceOfEth(address _tokenAddress, uint256 _ethAmount) external view returns (uint256) {
+    function priceOfEth(address _tokenAddress, uint256 _ethAmount) external view returns (uint256 tokenAmount) {
         Pool memory p = _pools[_tokenAddress];
         if(p.token == 0 || p.eth == 0) {
             return 0;
         }
         require(p.eth > (2 * _ethAmount) + 1, "eth amount too high");
-        return ((_ethAmount * p.token) - 1) / (p.eth - (2 * _ethAmount)) + 1;
+        tokenAmount = ((_ethAmount * p.token) - 1) / (p.eth - (2 * _ethAmount)) + 1;
+        return tokenAmount;
     }
 
     function swapToEth(address _tokenAddress, uint256 _tokenAmount, uint256 _minEthAmount, uint96 _deadline) public payable {
@@ -192,11 +187,12 @@ contract FondueSwap is IERC677Receiver {
         p.eth -= ethAmount;
         p.token += _tokenAmount;
 
-        uint256 gain = (p.eth * p.token) - previousLiquidity;
-        uint256 gainR = ((gain * PRECISION) + p.roundingSwap);
-        p.roundingSwap = gainR % p.liquidity; //rounding goes to the next
-        p.accWin += gainR / p.liquidity;
-        p.liquidityGain += gain;
+        uint256 gain = (p.eth * p.token) + (previousLiquidity) -
+                       (sqrt(4 * p.eth * p.token * previousLiquidity) + 1); //round up, otherwise we get a higher gain
+
+        console.log("GAIN", gain);
+
+        p.accGain += sqrt(gain) * PRECISION / previousLiquidity;
 
         //do the transfer
         payable(msg.sender).transfer(ethAmount);
@@ -204,13 +200,14 @@ contract FondueSwap is IERC677Receiver {
         emit SwapToEth(_tokenAddress, _tokenAmount, ethAmount);
     }
 
-    function priceOfToken(address _tokenAddress, uint256 _tokenAmount) external view returns (uint256) {
+    function priceOfToken(address _tokenAddress, uint256 _tokenAmount) external view returns (uint256 ethAmount) {
         Pool memory p = _pools[_tokenAddress];
         if(p.token == 0 || p.eth == 0) {
             return 0;
         }
         require(p.token > (2 * _tokenAmount) + 1, "token amount too high");
-        return ((_tokenAmount * p.eth) - 1) / (p.token - (2 * _tokenAmount)) + 1;
+        ethAmount = ((_tokenAmount * p.eth) - 1) / (p.token - (2 * _tokenAmount)) + 1;
+        return ethAmount;
     }
 
     function swapToToken(address _tokenAddress, uint256 _minTokenAmount, uint96 _deadline) public payable {
@@ -221,7 +218,6 @@ contract FondueSwap is IERC677Receiver {
         require(p.token > 0 && p.eth > 0, "pool cannot be empty");
 
         uint256 tokenAmount = (msg.value * p.token) / (p.eth + (2 * msg.value));
-
         require(tokenAmount > 0, "tokenAmount must be positive");
         require(_minTokenAmount <= tokenAmount, "min token not reached");
 
@@ -229,11 +225,12 @@ contract FondueSwap is IERC677Receiver {
         p.eth += msg.value;
         p.token -= tokenAmount;
 
-        uint256 gain = (p.eth * p.token) - previousLiquidity;
-        uint256 gainR = ((gain * PRECISION) + p.roundingSwap);
-        p.roundingSwap = gainR % p.liquidity; //rounding goes to the next
-        p.accWin += gainR / p.liquidity;
-        p.liquidityGain += gain;
+        uint256 gain = (p.eth * p.token) + (previousLiquidity) -
+                       (sqrt(4 * p.eth * p.token * previousLiquidity) + 1); //round up, otherwise we get a higher gain
+
+        console.log("GAIN", gain);
+
+        p.accGain += sqrt(gain) * PRECISION / previousLiquidity;
 
         ////do the transfer, ETH transfer already happened
         SafeERC20.safeTransfer(IERC20(_tokenAddress), msg.sender, tokenAmount);
