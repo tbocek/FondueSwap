@@ -141,13 +141,9 @@ contract FondueSwap is IERC677Receiver {
         console.log("ethAmount",ethAmount);
         console.log("tokenAmount",tokenAmount);
 
-        uint256 g = p.accGain - accGain;
-
-        uint256 t = sqrt(liquidity) * g / PRECISION;
-
-        //uint256 liquidityGain = (t * g * (p.accGain - accGain)) / PRECISION;
-        ethAmountFee = (t * p.eth / p.token);
-        tokenAmountFee = (t * p.token / p.eth);
+        uint256 liquidityGain = (liquidity * (p.accGain - accGain)) / PRECISION;
+        ethAmountFee = sqrt(liquidityGain * p.eth / p.token);
+        tokenAmountFee = sqrt(liquidityGain * p.token / p.eth);
 
         console.log("ethAmountFee",ethAmountFee);
         console.log("tokenAmountFee",tokenAmountFee);
@@ -192,7 +188,7 @@ contract FondueSwap is IERC677Receiver {
 
         console.log("GAIN", gain);
 
-        p.accGain += sqrt(gain) * PRECISION / previousLiquidity;
+        p.accGain += gain * PRECISION / previousLiquidity;
 
         //do the transfer
         payable(msg.sender).transfer(ethAmount);
@@ -230,7 +226,7 @@ contract FondueSwap is IERC677Receiver {
 
         console.log("GAIN", gain);
 
-        p.accGain += sqrt(gain) * PRECISION / previousLiquidity;
+        p.accGain += gain * PRECISION / previousLiquidity;
 
         ////do the transfer, ETH transfer already happened
         SafeERC20.safeTransfer(IERC20(_tokenAddress), msg.sender, tokenAmount);
