@@ -16,7 +16,6 @@ contract FondueLPNFT is ERC721 {
     struct LPInfo {
         uint256 ethAmount;
         uint256 tokenAmount;
-        uint256 poolAccWin;
     }
     uint256 private counter;
     address public swapAddress;
@@ -25,17 +24,17 @@ contract FondueLPNFT is ERC721 {
     constructor() ERC721("FondueLPNFT", "FLPNFT") {
         owner = msg.sender;
     }
-    function mint(address to, address _tokenAddress, uint256 _ethAmount, uint256 _tokenAmount, uint256 _poolAccWin) external returns (uint256) {
+    function mint(address to, address _tokenAddress, uint256 _ethAmount, uint256 _tokenAmount) external returns (uint256) {
         require(msg.sender == swapAddress);
         uint256 nftId = ((uint256(uint160(_tokenAddress)) << 96) | counter);
         _mint(to, nftId);
-        _lpInfos[nftId]= LPInfo(_ethAmount, _tokenAmount, _poolAccWin);
+        _lpInfos[nftId]= LPInfo(_ethAmount, _tokenAmount);
         counter++;
         return nftId;
     }
-    function lpInfos(uint256 nftId) external view returns (uint256 ethAmount, uint256 tokenAmount, uint256 poolAccWin) {
+    function lpInfos(uint256 nftId) external view returns (uint256 ethAmount, uint256 tokenAmount) {
         LPInfo memory lp = _lpInfos[nftId];
-        return (lp.ethAmount, lp.tokenAmount, lp.poolAccWin);
+        return (lp.ethAmount, lp.tokenAmount);
     }
     function setSwapAddress(address newSwapAddress) external {
         require(msg.sender == owner);
@@ -45,9 +44,9 @@ contract FondueLPNFT is ERC721 {
         require(msg.sender == swapAddress);
         _burn(nftId);
     }
-    function updateLP(uint256 nftId, uint256 _ethAmount, uint256 _tokenAmount, uint256 _poolAccWin) external {
+    function updateLP(uint256 nftId, uint256 _ethAmount, uint256 _tokenAmount) external {
         require(msg.sender == swapAddress);
-        _lpInfos[nftId]= LPInfo(_ethAmount, _tokenAmount, _poolAccWin);
+        _lpInfos[nftId]= LPInfo(_ethAmount, _tokenAmount);
     }
 
     //not needed, but hardhat cannot for unknown reasons do a safeTransferFrom
@@ -70,7 +69,8 @@ contract FondueSwap is IERC677Receiver {
         uint256 token;
         uint256 ethTotal;
         uint256 tokenTotal;
-        uint256 accGain;
+        uint256 ethSafety;
+        uint256 tokenSafety;
     }
 
     address private lpAddress;
@@ -96,64 +96,41 @@ contract FondueSwap is IERC677Receiver {
         p.ethTotal += msg.value;
         p.tokenTotal += tokenAmount;
         //hand out LP tokens
-        uint256 nftId = FondueLPNFT(lpAddress).mint(msg.sender, _tokenAddress, msg.value, tokenAmount, p.accGain);
+        uint256 nftId = FondueLPNFT(lpAddress).mint(msg.sender, _tokenAddress, msg.value, tokenAmount);
         emit AddLiquidity(_tokenAddress, tokenAmount, msg.value, nftId);
     }
 
     //remove liquidity
     function onTokenTransfer(address sender, uint256 nftId, bytes calldata) external {
-        /*require(msg.sender == lpAddress, "not the LP NFT");
-        (uint256 liquidity, uint256 accGain) = FondueLPNFT(lpAddress).lpInfos(nftId);
+        require(msg.sender == lpAddress, "not the LP NFT");
+        (uint256 ethAmount, uint256 tokenAmount) = FondueLPNFT(lpAddress).lpInfos(nftId);
         Pool storage p = _pools[address(uint160(nftId >> 96))]; // nftId >> 96 calculates the poolTokenAddress
-        (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee) = balanceOf(p, liquidity, accGain);
-        p.eth -= (ethAmount + ethAmountFee);
-        p.token -= (tokenAmount + tokenAmountFee);
-        p.liquidity -= liquidity;
-        payable(sender).transfer(ethAmount + ethAmountFee);
-        SafeERC20.safeTransfer(IERC20(address(uint160(nftId >> 96))), sender, tokenAmount + tokenAmountFee);
-        FondueLPNFT(lpAddress).burn(nftId);*/
+        (uint256 _ethAmount, uint256 _tokenAmount) = balanceOf(p, ethAmount, tokenAmount);
+        p.eth -= _ethAmount;
+        p.token -= _tokenAmount;
+        p.ethTotal -= ethAmount;
+        p.tokenTotal -= tokenAmount;
+        payable(sender).transfer(ethAmount);
+        SafeERC20.safeTransfer(IERC20(address(uint160(nftId >> 96))), sender, tokenAmount);
+        FondueLPNFT(lpAddress).burn(nftId);
     }
 
     function harvest(uint256 nftId) external {
-        /*address nftOwner = FondueLPNFT(lpAddress).ownerOf(nftId);
-        require(nftOwner != address(0), "owner not found");
-        (uint256 liquidity, uint256 accGain) = FondueLPNFT(lpAddress).lpInfos(nftId);
-        Pool storage p = _pools[address(uint160(nftId >> 96))]; // nftId >> 96 calculates the poolTokenAddress
-        (,uint256 ethAmountFee,, uint256 tokenAmountFee) = balanceOf(p, liquidity, accGain);
-        p.eth -= ethAmountFee;
-        p.token -= tokenAmountFee;
-        payable(nftOwner).transfer(ethAmountFee);
-        SafeERC20.safeTransfer(IERC20(address(uint160(nftId >> 96))), nftOwner, tokenAmountFee);
-        FondueLPNFT(lpAddress).updateLP(nftId, liquidity, p.accGain);*/
+        //no harvest yet
     }
 
     function balanceOf(uint256 nftId) external view returns (uint256 ethAmount, uint256 tokenAmount) {
-        (uint256 ethAmount, uint256 tokenAmount, uint256 accGain) = FondueLPNFT(lpAddress).lpInfos(nftId);
+        (uint256 ethAmount, uint256 tokenAmount) = FondueLPNFT(lpAddress).lpInfos(nftId);
         Pool memory p = _pools[address(uint160(nftId >> 96))]; // nftId >> 96 calculates the poolTokenAddress
-        (uint256 _ethAmount, uint256 _ethAmountFee, uint256 _tokenAmount, uint256 _tokenAmountFee) = balanceOf(p, ethAmount, tokenAmount, accGain);
-        return (_ethAmount + _ethAmountFee, _tokenAmount + _tokenAmountFee);
+        (uint256 _ethAmount, uint256 _tokenAmount) = balanceOf(p, ethAmount, tokenAmount);
+        return (_ethAmount, _tokenAmount);
     }
 
-    function balanceOf(Pool memory p, uint256 _ethAmount, uint256 _tokenAmount, uint256 accGain) internal view returns (uint256 ethAmount, uint256 ethAmountFee, uint256 tokenAmount, uint256 tokenAmountFee) {
-
+    function balanceOf(Pool memory p, uint256 _ethAmount, uint256 _tokenAmount) internal view returns (uint256 ethAmount, uint256 tokenAmount) {
         uint256 price = (_ethAmount * p.token / p.eth) + _tokenAmount;
-        //ethAmount = sqrt(liquidity * p.eth / p.token);
-        //tokenAmount = sqrt(liquidity * p.token / p.eth);
-
         ethAmount = price / (2*(p.token / p.eth));
         tokenAmount = ethAmount * p.token / p.eth;
-
-        console.log("ethAmount",ethAmount);
-        console.log("tokenAmount",tokenAmount);
-
-        //uint256 liquidityGain = (price * (p.accGain - accGain)) / PRECISION;
-        //ethAmountFee = sqrt(liquidityGain * p.eth / p.token);
-        //tokenAmountFee = sqrt(liquidityGain * p.token / p.eth);
-
-        //console.log("ethAmountFee",ethAmountFee);
-        //console.log("tokenAmountFee",tokenAmountFee);
-
-        return (ethAmount, 0, tokenAmount, 0);
+        return (ethAmount, tokenAmount);
     }
 
     function poolInfo(address poolTokenAddress) external view returns (uint256 ethAmount, uint256 tokenAmount) {
@@ -170,25 +147,37 @@ contract FondueSwap is IERC677Receiver {
         require(p.eth > (2 * _ethAmount) + 1, "eth amount too high");
         tokenAmount = ((_ethAmount * p.token) - 1) / (p.eth - (2 * _ethAmount)) + 1;
 
-        uint256 peth = p.eth - _ethAmount;
-        uint256 ptoken = p.token + tokenAmount;
-
-        uint256 origPrice = p.ethTotal * ptoken / peth + p.tokenTotal;
-        uint256 currPrice = 2 * ptoken;
-        console.log("11 origPrice", origPrice);
-        console.log("11 currPrice", currPrice);
-
+        uint256 origPrice = (p.ethTotal * (p.token + tokenAmount) / (p.eth - _ethAmount)) + p.tokenTotal;
+        uint256 currPrice = 2 * (p.token + tokenAmount);
         uint256 loss = origPrice - currPrice;
-        uint256 ethFee = loss / (2*(p.token / p.eth));
-        uint256 tokenFee = ethFee * p.token / p.eth;
-        console.log("11 loss", loss);
-        console.log("11 TtokenFee", tokenFee);
-        console.log("11 EEthFee", ethFee);
-        console.log("11 TOK", tokenAmount + tokenFee);
-        return (tokenAmount, tokenFee, ethFee);
+        tokenFee = (origPrice - currPrice) / 2;
+        ethFee = (p.eth - _ethAmount) * tokenFee / (p.token + tokenAmount);
+
+        if(p.ethSafety >= ethFee) {
+            ethFee = 0; //covered by the safety net
+        } else {
+            ethFee -= p.ethSafety;
+        }
+
+        if(p.tokenSafety >= tokenFee) {
+            tokenFee = 0; //covered by the safety net
+        } else {
+            tokenFee -= p.tokenSafety;
+        }
+
+        //if we decrease the price of the token, we need to pay 1% of the difference into the safety net
+        uint256 eF = (_ethAmount * (tokenAmount / _ethAmount) / (p.token/p.eth)) / 100;
+        uint256 tF = (tokenAmount *(p.token/p.eth)  / (tokenAmount / _ethAmount)) / 100;
+        //console.log(" (p.token/p.eth)",  (p.token/p.eth));
+        //console.log(" (tokenAmount / _ethAmount)",  (tokenAmount / _ethAmount));
+        //console.log(" (tokenAmount / _ethAmount) / (p.token/p.eth)",  (tokenAmount / _ethAmount) / (p.token/p.eth));
+        //console.log("tF", tF);
+        //console.log("eF", eF);
+
+        return (tokenAmount, tF + tokenFee, eF + ethFee);
     }
 
-    function swapToEth(address _tokenAddress, uint256 _tokenAmount, uint256 _minEthAmount, uint96 _deadline) public payable {
+    function sellToken(address _tokenAddress, uint256 _tokenAmount, uint256 _tokenFee, uint256 _minEthAmount, uint96 _deadline) public payable {
         //deadline of 0, means no deadline
         require(_deadline == 0 || _deadline > block.timestamp, "tx too old");
         require(_tokenAmount > 0, "tokenAmount must be positive");
@@ -200,85 +189,61 @@ contract FondueSwap is IERC677Receiver {
         require(ethAmount > 0, "eth must be positive");
         require(_minEthAmount <= ethAmount, "min eth not reached");
 
-        uint256 previousLiquidity = p.eth * p.token;
+        //now we need to "donate" liquidity to not have any impermanent loss
+        //uint256 origPrice = (p.ethTotal * (p.token + _tokenAmount) / (p.eth - ethAmount)) + p.tokenTotal;
+        //uint256 currPrice = 2 * (p.token + _tokenAmount);
+        //console.log("origPrice", origPrice);
+        //console.log("currPrice", currPrice);
+        //uint256 loss = origPrice - currPrice;
+
+        uint256 tokenFee = (((p.ethTotal * (p.token + _tokenAmount) / (p.eth - ethAmount)) + p.tokenTotal) - (2 * (p.token + _tokenAmount))) / 2;
+        uint256 ethFee = (p.eth - ethAmount) * tokenFee / (p.token + _tokenAmount);
+        uint256 eF = (ethAmount * (_tokenAmount / ethAmount) / (p.token/p.eth)) / 100;
+        uint256 tF = (_tokenAmount * (p.token/p.eth) / (_tokenAmount / ethAmount)) / 100;
+        p.tokenSafety += tF;
+        p.ethSafety += eF;
+
         p.eth -= ethAmount;
         p.token += _tokenAmount;
 
-        //now we need to "donate" liquidity to not have any impermanent loss
-        uint256 origPrice = p.ethTotal * p.token / p.eth + p.tokenTotal;
-        uint256 currPrice = p.eth * p.token / p.eth + p.token;
-
-        console.log("origPrice", origPrice);
-        console.log("currPrice", currPrice);
-
-        uint256 ethFee = 0;
-        uint256 tokenFee = 0;
-        uint256 loss = 0;
-
-        loss = origPrice - currPrice;
-        ethFee = loss / (2*(p.token / p.eth));
-        tokenFee = ethFee * p.token / p.eth;
-        console.log("loss", loss);
-        console.log("TtokenFee", tokenFee);
-        console.log("EEthFee", ethFee);
-
         p.eth += ethFee;
-        p.token += tokenFee;
+        if(p.ethSafety >= ethFee) {
+            p.ethSafety -= ethFee;
+            ethFee = 0; //covered by the safety net
+        }
+        else {
+            ethFee -= p.ethSafety; //partially covered by the safety net
+            p.ethSafety = 0;
+        }
 
-        //p.accGain += loss * PRECISION / origPrice;
+        p.token += tokenFee;
+        if(p.tokenSafety >= tokenFee) {
+            p.tokenSafety -= tokenFee;
+            tokenFee = 0; //covered by the safety net
+        } else {
+            tokenFee -= p.tokenSafety; //partially covered by the safety net
+            p.tokenSafety = 0;
+        }
 
         //do the transfer
-        payable(msg.sender).transfer(ethAmount - ethFee);
-        console.log("transfer", _tokenAmount + tokenFee);
-        SafeERC20.safeTransferFrom(IERC20(_tokenAddress), msg.sender, address(this), _tokenAmount + tokenFee);
+        require(_minEthAmount <= ethAmount - (ethFee + eF), "min eth not reached");
+        payable(msg.sender).transfer(ethAmount - (ethFee + eF));
+        require(tokenFee + tF <= _tokenFee);
+        SafeERC20.safeTransferFrom(IERC20(_tokenAddress), msg.sender, address(this), _tokenAmount + tokenFee + tF);
         emit SwapToEth(_tokenAddress, _tokenAmount, ethAmount);
     }
 
-    function priceOfToken(address _tokenAddress, uint256 _tokenAmount) external view returns (uint256 ethAmount, uint256 tokenFee, uint256 ethFee) {
+    function priceOfToken(address _tokenAddress, uint256 _tokenAmount) external view returns (uint256 ethAmount) {
         Pool memory p = _pools[_tokenAddress];
         if(p.token == 0 || p.eth == 0) {
-            return (0, 0, 0);
+            return 0;
         }
         require(p.token > (2 * _tokenAmount) + 1, "token amount too high");
         ethAmount = ((_tokenAmount * p.eth) - 1) / (p.token - (2 * _tokenAmount)) + 1;
-
-        console.log("_tokenAmount", _tokenAmount);
-        console.log("p.token", p.token);
-        console.log("ee", (((p.token * p.ethTotal) - p.tokenTotal) / (2 * p.eth)));
-        uint256 R = p.token - _tokenAmount - (((p.token * p.ethTotal) - p.tokenTotal) / (2 * p.eth));
-        console.log("R", R);
-
-        uint256 ee = (R*p.eth)/((p.token*p.ethTotal*2*p.eth)-(R*2));
-
-        console.log("ee", ee);
-
-        uint256 peth = p.eth + ethAmount;
-        uint256 ptoken = p.token - _tokenAmount;
-
-        console.log("new price", ptoken/peth);
-
-        console.log("22 peth", peth);
-        console.log("22 ptoken", ptoken);
-
-        uint256 origPrice = (p.ethTotal * ptoken / peth) + p.tokenTotal;
-        uint256 currPrice = 2 * ptoken;
-        console.log("22 origPrice", origPrice);
-        console.log("22 currPrice", currPrice);
-
-        uint256 gain = currPrice - origPrice;
-        tokenFee = gain / 2;
-        ethFee = peth * tokenFee / ptoken;
-        //uint256 ethFee = gain * p.eth / (2*(p.token));
-        //uint256 tokenFee = ethFee * p.token / p.eth;
-        console.log("22 loss", gain);
-        console.log("22 TtokenFee", tokenFee);
-        console.log("22 EEthFee", ethFee);
-        console.log("22 TOK", _tokenAmount + tokenFee);
-        return (ethAmount, tokenFee, ethFee);
-
+        return ethAmount;
     }
 
-    function swapToToken(address _tokenAddress, uint256 _minTokenAmount, uint96 _deadline) public payable {
+    function buyToken(address _tokenAddress, uint256 _minTokenAmount, uint96 _deadline) public payable {
         //deadline of 0, means no deadline
         require(_deadline == 0 || _deadline > block.timestamp, "tx too old");
         require(msg.value > 0, "eth must be positive");
@@ -290,18 +255,19 @@ contract FondueSwap is IERC677Receiver {
         require(_minTokenAmount <= tokenAmount, "min token not reached");
 
         //now we need to withdraw liquidity to not have any impermanent gain
-        //uint256 tokenFee = (p.token - tokenAmount) - (p.ethTotal * (p.token - tokenAmount) / (2 * (p.eth + msg.value))) + (p.tokenTotal / 2);
+        //the liquidity will be added to the safety net, which can be used
+        //in case of impermanent loss.
 
-        uint256 tokenFee = (p.token - ((msg.value * p.token) / (p.eth + (2 * msg.value)))) - (p.ethTotal * (p.token - ((msg.value * p.token) / (p.eth + (2 * msg.value)))) / (2 * (p.eth + msg.value))) + (p.tokenTotal / 2);
+        uint256 origPrice = (p.ethTotal * (p.token - tokenAmount) / (p.eth + msg.value)) + p.tokenTotal;
+        uint256 currPrice = 2 * (p.token - tokenAmount);
+        uint256 gain = currPrice - origPrice;
+        uint256 tokenFee = gain / 2;
         uint256 ethFee = (p.eth + msg.value) * tokenFee / (p.token - tokenAmount);
 
-        //uint256 origPrice = (p.ethTotal * p.token / p.eth) + p.tokenTotal;
-        //uint256 currPrice = 2 * p.token;
-
-        //console.log("origPrice", origPrice);
-        //console.log("currPrice", currPrice);
-
-
+        //alternative ethFee calculation
+        //uint256 ethFee = p.eth + msg.value - p.ethTotal/2 - (p.tokenTotal * p.eth)/(p.token*2) - (p.tokenTotal* msg.value)/p.token;
+        //uint256 tokenFee = ((2 * (p.token - ((msg.value * p.token) / (p.eth + (2 * msg.value))))) - ((p.ethTotal * (p.token - ((msg.value * p.token) / (p.eth + (2 * msg.value)))) / (p.eth + msg.value)) + p.tokenTotal)) / 2;
+        //uint256 tokenFee = (p.token - tokenAmount) * ethFee /  (p.eth + msg.value);
 
         p.eth += msg.value;
         p.token -= tokenAmount;
@@ -309,8 +275,12 @@ contract FondueSwap is IERC677Receiver {
         p.eth -= ethFee;
         p.token -= tokenFee;
 
+        //add to the safety net
+        p.ethSafety += ethFee;
+        p.tokenSafety += tokenFee;
+
         ////do the transfer, ETH transfer already happened
-        SafeERC20.safeTransfer(IERC20(_tokenAddress), msg.sender, tokenAmount + tokenFee);
+        SafeERC20.safeTransfer(IERC20(_tokenAddress), msg.sender, tokenAmount);
         emit SwapToToken(_tokenAddress, tokenAmount, msg.value);
     }
 

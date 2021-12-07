@@ -50,20 +50,20 @@ async function addLiquidity(tokenAmount, ethAmount, fromAccount) {
     return nftId;
 }
 
-async function swapToToken(requestedTokenAmount, fromAccount) {
+async function buyToken(requestedTokenAmount, fromAccount) {
     await poolInfo("Before swap: ");
     const tokenInfo = await swap.priceOfToken(token.address, requestedTokenAmount.toString());
-    const ethAmount = new BN(tokenInfo.ethAmount.toString()).add(new BN(tokenInfo.ethFee.toString())).toString();
-    console.log("to get the following amount of tokens: ", requestedTokenAmount.toString());
-    console.log("we need to spent the this amount eth : ", ethAmount.toString());
+    //const ethAmount = new BN(tokenInfo.ethAmount.toString()).add(new BN(tokenInfo.ethFee.toString())).toString();
+    console.log("Buy TOK: to get the following amount of tokens:", requestedTokenAmount.toString());
+    console.log("we need to spent the this amount eth:", tokenInfo.toString());
 
     const previousTokenBalance = await token.balanceOf(fromAccount.address);
     const previousWeiBalance = await fromAccount.getBalance();
     //events seem not to work in current hardhat setup
-    await swap.connect(fromAccount).swapToToken(token.address,
-        new BN(requestedTokenAmount.toString()).sub(new BN(tokenInfo.tokenFee.toString())).toString(),
+    await swap.connect(fromAccount).buyToken(token.address,
+        new BN(requestedTokenAmount.toString()).sub(new BN(tokenInfo.toString())).toString(),
         0,
-        {value: ethAmount.toString()});
+        {value: tokenInfo.toString()});
     const afterTokenBalance = await token.balanceOf(fromAccount.address);
     const afterWeiBalance = await fromAccount.getBalance();
 
@@ -71,24 +71,25 @@ async function swapToToken(requestedTokenAmount, fromAccount) {
     const bn1 = new BN(afterTokenBalance.toString()).sub(new BN(previousTokenBalance.toString()));
     //expect(bn1.sub(new BN(requestedTokenAmount.toString()))).to.lte.BN("200"); //due to round up, we may see a higher token price than the actual ratio
     const bn2 = new BN(previousWeiBalance.sub(afterWeiBalance).toString());
-    expect(bn2).to.eq.BN(new BN(ethAmount.toString()));
+    expect(bn2).to.eq.BN(new BN(tokenInfo.toString()));
     await poolInfo("After swap:  ");
-    return ethAmount;
+    return tokenInfo;
 }
 
-async function swapToEth(requestedEthAmount, fromAccount) {
+async function sellToken(requestedEthAmount, fromAccount) {
     await poolInfo("Before swap: ");
     const tokenInfo = await swap.priceOfEth(token.address, requestedEthAmount.toString());
-    const tokenAmount = new BN(tokenInfo.tokenAmount.toString()).add(new BN(tokenInfo.tokenFee.toString())).toString();
-    console.log("to get the following amount of eth:     ", requestedEthAmount.toString(), "minus fee", tokenInfo.ethFee.toString());
-    console.log("we need to spent the this amount token: ", tokenAmount.toString());
+    const tokenAmount = new BN(tokenInfo.tokenAmount.toString()).add(new BN(tokenInfo.tokenFee.toString()));
+    const ethAmount = new BN(requestedEthAmount.toString()).sub(new BN(tokenInfo.ethFee.toString()));
+    console.log("Sell TOK: to get the following amount of eth:", ethAmount.toString(), "including fee of tok: ", tokenInfo.tokenFee.toString(), ", fee eth:", tokenInfo.ethFee.toString());
+    console.log("we need to spent the this amount token:", tokenAmount.toString(), "at price: ", tokenAmount.div(ethAmount).toString(),"T/ETH");
 
     //events seem not to work in current hardhat setup
     await token.connect(accounts[0]).transfer(fromAccount.address, tokenAmount.toString());
     const previousTokenBalance = await token.balanceOf(fromAccount.address);
     const previousWeiBalance = await fromAccount.getBalance();
     await token.connect(fromAccount).approve(swap.address, tokenAmount.toString());
-    await swap.connect(fromAccount).swapToEth(token.address, tokenInfo.tokenAmount.toString(), requestedEthAmount.toString(), 0);
+    await swap.connect(fromAccount).sellToken(token.address, tokenInfo.tokenAmount.toString(), tokenInfo.tokenFee.toString(), ethAmount.toString(), 0);
     const afterTokenBalance = await token.balanceOf(fromAccount.address);
     const afterWeiBalance = await fromAccount.getBalance();
 
@@ -157,324 +158,9 @@ describe("FondueSwap Test", function () {
         nftNr = 0;
     });
 
-    /*it('Check Token', async function () {
+    it('Check Token', async function () {
         expect(await token.name()).to.equal("SomeERC20");
     });
-
-    it('Add Liquidity', async function () {
-        const nftId = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-
-        const info = await lp.lpInfos(nftId);
-        expect(new BN(info.liquidity.toString())).to.eq.BN(TWO_E18.mul(ONE_E18));
-        expect(new BN(info.poolAccWin.toString())).to.eq.BN("0");
-
-        const balance = await swap.balanceOf(nftId);
-        expect(new BN(balance.ethAmount.toString())).to.eq.BN(ONE_E18);
-        expect(new BN(balance.tokenAmount.toString())).to.eq.BN(TWO_E18);
-
-        const p1 = await swap.poolInfo(token.address);
-        expect(new BN(p1.ethAmount.toString())).to.eq.BN(ONE_E18);
-        expect(new BN(p1.tokenAmount.toString())).to.eq.BN(TWO_E18);
-    });
-
-    it('Large trade, Buy tokens, Sell Weis (resulting in balanced pool)', async function () {
-        const nftId = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        const {tx, ethAmount} = await swapToToken(FIV_E17, accounts[1]);
-        poolTest(nftId);
-    });
-
-    it('Small trade, Buy tokens, Sell Weis (not much impact)', async function () {
-        const nftId = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        await swapToToken(FIV_E02, accounts[2]);
-        poolTest(nftId);
-    });
-
-    it('Large trade, Buy tokens, Sell Weis', async function () {
-        const nftId = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        await swapToToken(FIV_E02, accounts[2]);
-        await swapToToken(SEV_E17, accounts[3]);
-        poolTest(nftId);
-    });
-
-    it('Large trade, Buy Wei, Sell Tokens', async function () {
-        const nftId = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        await swapToToken(FIV_E02, accounts[2]);
-        await swapToToken(SEV_E17, accounts[3]);
-        await swapToEth(FIV_E17, accounts[4]);
-        poolTest(nftId);
-    });
-
-    it('Large trade, Buy Wei, Sell Tokens', async function () {
-        const nftId = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        await swapToToken(FIV_E02, accounts[2]);
-        await swapToToken(SEV_E17, accounts[3]);
-        await swapToEth(FIV_E17, accounts[4]);
-        await swapToEth(ONE_E18, accounts[5]);
-        poolTest(nftId);
-    });
-
-    it('Add Liquidity and Retrieve it', async function () {
-        const nftId1 = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        const b1m = await swap.balanceOf(nftId1);
-        const nftId2 = await addLiquidity(OFI_E18, OFI_E18, accounts[6]);
-
-        await swapToToken(FIV_E02, accounts[2]);
-        await swapToToken(SEV_E17, accounts[3]);
-
-        await swapToEth(FIV_E17, accounts[4]);
-        await swapToEth(ONE_E18, accounts[5]);
-
-        const b1 = await swap.balanceOf(nftId1);
-        const b2 = await swap.balanceOf(nftId2);
-
-        await poolTest(nftId1, nftId2);
-        console.log("Tok total:          ", b2.tokenAmount.add(b1.tokenAmount).toString());
-        console.log("Eth total:          ", b1.ethAmount.add(b2.ethAmount).toString());
-    });
-
-    it('Add Liquidity and Retrieve it 2', async function () {
-        const nftId1 = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        const nftId2 = await addLiquidity(OFI_E18, OFI_E18, accounts[6]);
-        await swapToToken(FIV_E02, accounts[2]);
-        await swapToToken(SEV_E17, accounts[3]);
-        const nftId3 = await addLiquidity(TWO_E18, TWO_E18, accounts[7]);
-        await swapToEth(FIV_E17, accounts[4]);
-        await swapToEth(ONE_E18, accounts[5]);
-
-        const b1 = await swap.balanceOf(nftId1);
-        const b2 = await swap.balanceOf(nftId2);
-        const b3 = await swap.balanceOf(nftId3);
-
-        await poolTest(nftId1, nftId2, nftId3);
-        console.log("TOK ADD:", b2.tokenAmount.add(b1.tokenAmount).add(b3.tokenAmount).toString(), "\tETH ADD:", b1.ethAmount.add(b2.ethAmount).add(b3.ethAmount).toString());
-    });
-
-    it('Add Liquidity and Remove Liquidity', async function () {
-        const nftId1 = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await poolTest(nftId1);
-        await removeLiquidity(nftId1, accounts[0]);
-        await poolTest();
-    });
-
-    it('Add Liquidity, Swap, and Remove Liquidity', async function () {
-        const nftId1 = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await poolTest(nftId1);
-        await swapToToken(FIV_E17, accounts[1]);
-        await swapToToken(FIV_E02, accounts[2]);
-        await swapToToken(SEV_E17, accounts[3]);
-        await swapToEth(FIV_E17, accounts[4]);
-        await swapToEth(ONE_E18, accounts[5]);
-        await removeLiquidity(nftId1, accounts[0]);
-        await poolTest();
-    });
-
-    it('Add Liquidity, Swap, and Remove Liquidity 2', async function () {
-        const nftId1 = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        await swapToToken(FIV_E02, accounts[2]);
-        const nftId2 = await addLiquidity(ONE_E18, ONE_E18, accounts[6]);
-        await swapToToken(SEV_E17, accounts[3]);
-        await swapToEth(FIV_E17, accounts[4]);
-        await removeLiquidity(nftId1, accounts[0]);
-        await swapToEth(FIV_E17, accounts[5]);
-        await swapToToken(ONE_E12, accounts[5]);
-        await poolTest(nftId1, nftId2);
-        await removeLiquidity(nftId2, accounts[6]);
-        await poolTest();
-    });
-
-    it('Add Liquidity, Swap, and Remove Liquidity 3', async function () {
-        const nftId1 = await addLiquidity(TWO_E18, ONE_E18, accounts[0]);
-        await swapToToken(FIV_E17, accounts[1]);
-        await swapToToken(FIV_E02, accounts[2]);
-        const nftId2 = await addLiquidity(ONE_E18, ONE_E18, accounts[6]);
-        await swapToToken(SEV_E17, accounts[3]);
-        await swapToEth(FIV_E17, accounts[4]);
-        await removeLiquidity(nftId1, accounts[0]);
-        await swapToEth(ONE_E12, accounts[5]);
-        const nftId3 = await addLiquidity(ONE_E18, ONE_E18, accounts[9]);
-        await swapToToken(FIV_E17, accounts[5]);
-        await poolTest(nftId2, nftId3);
-        await removeLiquidity(nftId2, accounts[6]);
-        await swapToEth(FIV_E17, accounts[8]);
-        await removeLiquidity(nftId3, accounts[9]);
-        await poolTest();
-    });*/
-
-    /*it('Test Impermanent Loss', async function () {
-        //initially, the price is 200$/1ETH
-        const mul = 1e4;
-        const nftId1 = await addLiquidity(200 * mul, 1 * mul, accounts[0]);
-        const nftId2 = await addLiquidity(2000 * mul, 10 * mul, accounts[1]);
-        //now the price of ETH goes up to 300$/ETH
-        //arbitrage 1.5ETH, get for 412 Dai at 297$/ETH
-        //as soon as there is 1 wei profit, the arbitrage will happen, however, any blockchain fee is excluded
-        await swapToEth(18333, accounts[8]);
-        //arbitrage goes to other exchange where its traded at 300$/ETH and he gets for 1.5ETH 450 DAI -> 38 DAI profit
-
-        // 1.8 -> 5
-        // 1.5 -> 38
-        // 1.2 -> 53
-        // 1.1 -> 55
-        // 1.0 -> 56
-        // 0.9 -> 55
-        // 0.5 -> 40
-        // 0.2 -> 19
-
-        const b1 = await swap.balanceOf(nftId1);
-        console.log("LP1 ETH: ", b1.ethAmount.toString());
-        console.log("LP1 TOK: ", b1.tokenAmount.toString());
-        console.log("LP 1 has:", new BN(b1.ethAmount.toString()).muln(300).add(new BN(b1.tokenAmount.toString())).toString());
-        console.log("LP 1HODL:", new BN(1 * mul).muln(300).add(new BN(200 * mul)).toString());
-        const b2 = await swap.balanceOf(nftId2);
-        console.log("LP2 ETH: ", b2.ethAmount.toString());
-        console.log("LP2 TOK: ", b2.tokenAmount.toString());
-        console.log("LP 2 has:", new BN(b2.ethAmount.toString()).muln(300).add(new BN(b2.tokenAmount.toString())).toString());
-        console.log("LP 2HODL:", new BN(10 * mul).muln(300).add(new BN(2000 * mul)).toString());
-
-        await poolInfo();
-
-    });*/
-
-    /*it('Test Impermanent Loss 2', async function () {
-        //initially, the price is 200$/1ETH
-        const mul = 1e4;
-        const nftId1 = await addLiquidity(200 * mul, 1 * mul, accounts[0]);
-        const nftId2 = await addLiquidity(2000 * mul, 10 * mul, accounts[1]);
-        //now the price of ETH goes up to 300$/ETH
-        //arbitrage 1.5ETH, get for 412 Dai at 297$/ETH
-        //as soon as there is 1 wei profit, the arbitrage will happen, however, any blockchain fee is excluded
-        await swapToEth(18333, accounts[8]);
-
-        //arbitrage goes to other exchange where its traded at 300$/ETH and he gets for 1.5ETH 450 DAI -> 38 DAI profit
-
-        // 1.8 -> 5
-        // 1.5 -> 38
-        // 1.2 -> 53
-        // 1.1 -> 55
-        // 1.0 -> 56
-        // 0.9 -> 55
-        // 0.5 -> 40
-        // 0.2 -> 19
-
-        const nftId3 = await addLiquidity(3000 * mul, 10 * mul, accounts[1]); //now he has 52.17%
-
-        const b1 = await swap.balanceOf(nftId1);
-        console.log("LP1 ETH: ", b1.ethAmount.toString());
-        console.log("LP1 TOK: ", b1.tokenAmount.toString());
-        console.log("LP1 has: ", new BN(b1.ethAmount.toString()).muln(300).add(new BN(b1.tokenAmount.toString())).toString());
-        console.log("LP1 HODL:", new BN(1 * mul).muln(300).add(new BN(200 * mul)).toString());
-
-        const b2 = await swap.balanceOf(nftId2);
-        console.log("LP2 ETH: ", b2.ethAmount.toString());
-        console.log("LP2 TOK: ", b2.tokenAmount.toString());
-        console.log("LP2 has: ", new BN(b2.ethAmount.toString()).muln(300).add(new BN(b2.tokenAmount.toString())).toString());
-        console.log("LP2 HODL:", new BN(10 * mul).muln(300).add(new BN(2000 * mul)).toString());
-
-        const b3 = await swap.balanceOf(nftId3);
-        console.log("LP3 ETH: ", b3.ethAmount.toString());
-        console.log("LP3 TOK: ", b3.tokenAmount.toString());
-        console.log("LP3 has: ", new BN(b3.ethAmount.toString()).muln(300).add(new BN(b3.tokenAmount.toString())).toString());
-        console.log("LP3 HODL:", new BN(10 * mul).muln(300).add(new BN(3000 * mul)).toString());
-
-        await poolInfo();
-
-    });*/
-
-    /*it('Test Impermanent Loss 3', async function () {
-        //initially, the price is 200$/1ETH
-        const mul = 1e4;
-        const nftId1 = await addLiquidity(200 * mul, 1 * mul, accounts[0]);
-        const nftId2 = await addLiquidity(2000 * mul, 10 * mul, accounts[1]);
-        //now the price of ETH goes up to 300$/ETH
-        //arbitrage 1.5ETH, get for 412 Dai at 297$/ETH
-        //as soon as there is 1 wei profit, the arbitrage will happen, however, any blockchain fee is excluded
-        await swapToEth(18333, accounts[8]);
-
-        //arbitrage goes to other exchange where its traded at 300$/ETH and he gets for 1.5ETH 450 DAI -> 38 DAI profit
-
-        // 1.8 -> 5
-        // 1.5 -> 38
-        // 1.2 -> 53
-        // 1.1 -> 55
-        // 1.0 -> 56
-        // 0.9 -> 55
-        // 0.5 -> 40
-        // 0.2 -> 19
-
-        const nftId3 = await addLiquidity(3000 * mul, 10 * mul, accounts[1]); //now he has 52.17%
-
-        await swapToToken(200000, accounts[7]);
-        await swapToEth(300, accounts[6]);
-        await swapToToken(30000, accounts[7]);
-        await swapToEth(500, accounts[6]);
-
-        const b1 = await swap.balanceOf(nftId1);
-        console.log("LP1 ETH: ", b1.ethAmount.toString());
-        console.log("LP1 TOK: ", b1.tokenAmount.toString());
-        console.log("LP1 has: ", new BN(b1.ethAmount.toString()).muln(300).add(new BN(b1.tokenAmount.toString())).toString());
-        console.log("LP1 HODL:", new BN(1 * mul).muln(300).add(new BN(200 * mul)).toString());
-
-        const b2 = await swap.balanceOf(nftId2);
-        console.log("LP2 ETH: ", b2.ethAmount.toString());
-        console.log("LP2 TOK: ", b2.tokenAmount.toString());
-        console.log("LP2 has: ", new BN(b2.ethAmount.toString()).muln(300).add(new BN(b2.tokenAmount.toString())).toString());
-        console.log("LP2 HODL:", new BN(10 * mul).muln(300).add(new BN(2000 * mul)).toString());
-
-        const b3 = await swap.balanceOf(nftId3);
-        console.log("LP3 ETH: ", b3.ethAmount.toString());
-        console.log("LP3 TOK: ", b3.tokenAmount.toString());
-        console.log("LP3 has: ", new BN(b3.ethAmount.toString()).muln(300).add(new BN(b3.tokenAmount.toString())).toString());
-        console.log("LP3 HODL:", new BN(10 * mul).muln(300).add(new BN(3000 * mul)).toString());
-
-        await poolInfo();
-
-    });*/
-
-    /*it('Test Impermanent Loss 4', async function () {
-        //initially, the price is 200$/1ETH
-        const mul = 1e4;
-        const nftId1 = await addLiquidity(200 * mul, 1 * mul, accounts[0]);
-        const nftId2 = await addLiquidity(2000 * mul, 10 * mul, accounts[1]);
-        //now the price of ETH goes up to 300$/ETH
-        //arbitrage 1.5ETH, get for 412 Dai at 297$/ETH
-        //as soon as there is 1 wei profit, the arbitrage will happen, however, any blockchain fee is excluded
-        await swapToToken(546 * mul, accounts[8]);
-        await swapToEth(30000, accounts[6]);
-        //await swapToToken(393 * mul, accounts[7]);
-
-        //arbitrage goes to other exchange where its traded at 300$/ETH and he gets for 1.5ETH 450 DAI -> 38 DAI profit
-
-        // 1.8 -> 5
-        // 1.5 -> 38
-        // 1.2 -> 53
-        // 1.1 -> 55
-        // 1.0 -> 56
-        // 0.9 -> 55
-        // 0.5 -> 40
-        // 0.2 -> 19
-
-        const b1 = await swap.balanceOf(nftId1);
-        console.log("LP1 ETH: ", b1.ethAmount.toString());
-        console.log("LP1 TOK: ", b1.tokenAmount.toString());
-        console.log("LP1 has: ", new BN(b1.ethAmount.toString()).muln(100).add(new BN(b1.tokenAmount.toString())).toString());
-        console.log("LP1 HODL:", new BN(1 * mul).muln(100).add(new BN(200 * mul)).toString());
-
-        const b2 = await swap.balanceOf(nftId2);
-        console.log("LP2 ETH: ", b2.ethAmount.toString());
-        console.log("LP2 TOK: ", b2.tokenAmount.toString());
-        console.log("LP2 has: ", new BN(b2.ethAmount.toString()).muln(100).add(new BN(b2.tokenAmount.toString())).toString());
-        console.log("LP2 HODL:", new BN(10 * mul).muln(100).add(new BN(2000 * mul)).toString());
-
-        await poolInfo();
-
-    });*/
 
     it('Test Impermanent Loss 4', async function () {
         //initially, the price is 200$/1ETH
@@ -484,23 +170,18 @@ describe("FondueSwap Test", function () {
         //now the price of ETH goes up to 300$/ETH
         //arbitrage 1.5ETH, get for 412 Dai at 297$/ETH
         //as soon as there is 1 wei profit, the arbitrage will happen, however, any blockchain fee is excluded
-        await swapToEth(5 * mul, accounts[6]);
-        await swapToEth(1 * mul, accounts[6]);
-        await swapToToken(393 * mul, accounts[7]);
-
-        //arbitrage goes to other exchange where its traded at 300$/ETH and he gets for 1.5ETH 450 DAI -> 38 DAI profit
-
-        // 1.8 -> 5
-        // 1.5 -> 38
-        // 1.2 -> 53
-        // 1.1 -> 55
-        // 1.0 -> 56
-        // 0.9 -> 55
-        // 0.5 -> 40
-        // 0.2 -> 19
+        await sellToken(5 * mul, accounts[6]);
+        await sellToken(1 * mul, accounts[6]);
+        await buyToken(393 * mul, accounts[7]);
+        await buyToken(500 * mul, accounts[7]);
+        await sellToken(1 * mul, accounts[6]);
+        await buyToken(3000 * mul, accounts[7]);
+        const nftId3 = await addLiquidity(100000 * mul, 10 * mul, accounts[1]);
+        await sellToken(500, accounts[6]);
 
         await nftInfo(nftId1);
         await nftInfo(nftId2);
+        await nftInfo(nftId3);
         await poolInfo();
     });
 
